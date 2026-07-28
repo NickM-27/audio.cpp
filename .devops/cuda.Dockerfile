@@ -10,6 +10,10 @@ ARG BUILD_DATE=N/A
 ARG APP_VERSION=N/A
 ARG APP_REVISION=N/A
 ARG GCC_VERSION=14
+# Leave empty to let CMakeLists.txt derive the architecture list from the
+# toolkit version (covers Turing through Blackwell). Set it to build a smaller,
+# faster-compiling image for one GPU, e.g. CUDA_ARCHS=120a-real for RTX 50xx.
+ARG CUDA_ARCHS=""
 
 ARG BASE_CUDA_DEV_CONTAINER=docker.io/nvidia/cuda:${CUDA_VERSION}-devel-ubuntu${UBUNTU_VERSION}
 ARG BASE_CUDA_RUN_CONTAINER=docker.io/nvidia/cuda:${CUDA_VERSION}-runtime-ubuntu${UBUNTU_VERSION}
@@ -17,6 +21,7 @@ ARG BASE_CUDA_RUN_CONTAINER=docker.io/nvidia/cuda:${CUDA_VERSION}-runtime-ubuntu
 FROM ${BASE_CUDA_DEV_CONTAINER} AS build
 
 ARG GCC_VERSION=14
+ARG CUDA_ARCHS=""
 
 # Install build toolchain
 RUN apt-get update && \
@@ -32,6 +37,7 @@ COPY . .
 
 # Configure and build
 RUN cmake -S . -B build \
+        ${CUDA_ARCHS:+-DCMAKE_CUDA_ARCHITECTURES=${CUDA_ARCHS}} \
         -DCMAKE_BUILD_TYPE=Release \
         -DAUDIOCPP_MODEL_SET=full \
         -DENGINE_ENABLE_CPU_ALL_VARIANTS=ON \

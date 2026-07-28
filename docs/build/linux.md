@@ -54,8 +54,23 @@ readelf -d build/bin/audiocpp_server | grep NEEDED | grep cuda
 # want libcudart.so.12 / libcublas.so.12 — libcudart.so.11.0 means a mixed build
 ```
 
-Leave `CMAKE_CUDA_ARCHITECTURES` unset to build for the GPUs present at build time
-(`native`). Note that CMake caches the CUDA compiler: switching toolkits in an
+Leave `CMAKE_CUDA_ARCHITECTURES` unset and the build picks it for you: the GPUs
+present at build time (`native`) for an ordinary build, or a list spanning Turing
+through Blackwell when `ENGINE_ENABLE_CPU_ALL_VARIANTS=ON` disables native
+detection (how the Docker images are built). Which architectures actually landed
+in the binary is worth checking, because getting this wrong is quiet — ggml
+selects kernels from the *compiled* architecture list, so a binary lacking device
+code for your card runs an older card's kernels rather than failing:
+
+```bash
+cuobjdump --list-elf build/bin/audiocpp_server | grep -oE 'sm_[0-9]+' | sort -u
+# want your GPU's architecture — sm_120 for RTX 50xx, sm_89 for RTX 40xx
+```
+
+With `GGML_BACKEND_DL=ON` (again, the Docker images) the CUDA kernels live in
+`libggml-cuda.so` instead, so point `cuobjdump` at that.
+
+Note that CMake caches the CUDA compiler: switching toolkits in an
 existing build directory requires deleting `CMakeCache.txt` and `CMakeFiles/`.
 
 

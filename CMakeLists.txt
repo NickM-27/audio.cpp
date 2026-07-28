@@ -149,26 +149,8 @@ if (ENGINE_HIP_STRIX_HALO_OPTIMIZATIONS)
     message(STATUS "Strix Halo HIP optimizations enabled for gfx1151 with rocBLAS")
 endif()
 
-if (ENGINE_ENABLE_CUDA AND NOT ENGINE_ENABLE_HIP)
-    enable_language(CUDA)
-    # 12.0 is a floor, not a target: any 12.x or 13.x works (the Dockerfile pins
-    # 12.9.0, and docs/build/windows.md ships a CUDA 13 package). The minimum is
-    # enforced because an older toolkit configures happily and only fails at the
-    # first .cu file, which reads as a code bug rather than a toolchain one: nvcc
-    # < 11.6 cannot parse libstdc++ >= 11.3 headers ("parameter packs not expanded
-    # with '...'" in <functional>), and distros still ship such pairings (Ubuntu
-    # 22.04's nvidia-cuda-toolkit is 11.5). Fail here, with a pointer, instead.
-    # The upper bound is the host compiler the chosen toolkit accepts, not CUDA
-    # itself (e.g. CUDA 12.9 supports GCC <= 14), so it is left to the toolkit.
-    find_package(CUDAToolkit 12.0 REQUIRED)
-    if (NOT MSVC)
-        set(CMAKE_CUDA_FLAGS_DEBUG "${AUDIOCPP_DEBUG_OPT_FLAGS}" CACHE STRING "Optimized debug CUDA flags" FORCE)
-    endif()
-endif()
-if (ENGINE_ENABLE_OPENMP)
-    find_package(OpenMP REQUIRED COMPONENTS CXX)
-endif()
-
+# Decided before the CUDA block below, which reads GGML_NATIVE when choosing
+# the default CUDA architectures.
 if (ENGINE_ENABLE_CPU_ALL_VARIANTS)
     message(STATUS "CPU all variants mode: enabling shared libraries + backends as dynamic libs")
     set(BUILD_SHARED_LIBS ON CACHE BOOL "Build shared libraries" FORCE)
@@ -183,6 +165,77 @@ else()
     set(GGML_BACKEND_DL OFF CACHE BOOL "Build backends as dynamic libraries" FORCE)
     set(GGML_CPU_ALL_VARIANTS OFF CACHE BOOL "Build all CPU backend variants" FORCE)
     set(GGML_NATIVE ${ENGINE_ENABLE_NATIVE_CPU} CACHE BOOL "Build ggml CPU kernels with native host ISA flags" FORCE)
+endif()
+
+if (ENGINE_ENABLE_CUDA AND NOT ENGINE_ENABLE_HIP)
+    # Record whether the caller picked the architectures before CMake gets a
+    # chance to invent a default for us; see the fixup below enable_language().
+    if (DEFINED CMAKE_CUDA_ARCHITECTURES)
+        set(AUDIOCPP_CUDA_ARCHS_FROM_CALLER TRUE)
+    else()
+        set(AUDIOCPP_CUDA_ARCHS_FROM_CALLER FALSE)
+    endif()
+
+    enable_language(CUDA)
+    # 12.0 is a floor, not a target: any 12.x or 13.x works (the Dockerfile pins
+    # 12.9.0, and docs/build/windows.md ships a CUDA 13 package). The minimum is
+    # enforced because an older toolkit configures happily and only fails at the
+    # first .cu file, which reads as a code bug rather than a toolchain one: nvcc
+    # < 11.6 cannot parse libstdc++ >= 11.3 headers ("parameter packs not expanded
+    # with '...'" in <functional>), and distros still ship such pairings (Ubuntu
+    # 22.04's nvidia-cuda-toolkit is 11.5). Fail here, with a pointer, instead.
+    # The upper bound is the host compiler the chosen toolkit accepts, not CUDA
+    # itself (e.g. CUDA 12.9 supports GCC <= 14), so it is left to the toolkit.
+    find_package(CUDAToolkit 12.0 REQUIRED)
+
+    # ggml keeps a good architecture list in
+    # external/ggml/src/ggml-cuda/CMakeLists.txt, but it is guarded by
+    # `if (NOT DEFINED CMAKE_CUDA_ARCHITECTURES)`. Under CMP0104 -- NEW at our
+    # cmake_minimum_required -- enable_language(CUDA) above has already defined
+    # that variable as nvcc's own default (52 on CUDA 12, 75 on CUDA 13), so
+    # ggml's list never runs and we ship device code for nothing newer.
+    #
+    # That is not just a JIT slowdown. ggml_cuda_highest_compiled_arch() derives
+    # host-side kernel selection from __CUDA_ARCH_LIST__, so a binary compiled
+    # only for sm_75 runs the Turing flash-attention tile and the narrow MMQ
+    # path on Blackwell hardware. Replace CMake's default with ggml's choice
+    # before add_subdirectory(ggml) below, and leave a caller-supplied value
+    # alone. Kept deliberately parallel to ggml's block so the two can be
+    # re-synced by eye; the CUDA >= 11.6 and >= 11.8 gates it carries are always
+    # true against our 12.0 floor and are folded in here.
+    if (NOT AUDIOCPP_CUDA_ARCHS_FROM_CALLER)
+        set(AUDIOCPP_CUDA_ARCHS "")
+        if (GGML_NATIVE AND CMAKE_VERSION VERSION_GREATER_EQUAL "3.24")
+            set(AUDIOCPP_CUDA_ARCHS "native")
+        else()
+            if (CUDAToolkit_VERSION VERSION_LESS "13")
+                list(APPEND AUDIOCPP_CUDA_ARCHS 50-virtual 61-virtual 70-virtual)
+            endif()
+            list(APPEND AUDIOCPP_CUDA_ARCHS 75-virtual 80-virtual 86-real 89-real)
+            if (CUDAToolkit_VERSION VERSION_GREATER_EQUAL "12.8")
+                list(APPEND AUDIOCPP_CUDA_ARCHS 120a-real)
+            endif()
+            if (CUDAToolkit_VERSION VERSION_GREATER_EQUAL "12.9")
+                list(APPEND AUDIOCPP_CUDA_ARCHS 121a-real)
+            endif()
+        endif()
+        # Write through to the cache, not just this scope: enable_language() puts
+        # its default there, so a normal set() would be recomputed against the
+        # stale entry on every re-configure. Caching ours also means a later
+        # -DCMAKE_CUDA_ARCHITECTURES=... on an existing build dir still wins,
+        # because -D updates the cache before this file runs.
+        set(CMAKE_CUDA_ARCHITECTURES "${AUDIOCPP_CUDA_ARCHS}" CACHE STRING
+            "CUDA architectures to build device code for" FORCE)
+        unset(AUDIOCPP_CUDA_ARCHS)
+    endif()
+    message(STATUS "Using CMAKE_CUDA_ARCHITECTURES=${CMAKE_CUDA_ARCHITECTURES}")
+
+    if (NOT MSVC)
+        set(CMAKE_CUDA_FLAGS_DEBUG "${AUDIOCPP_DEBUG_OPT_FLAGS}" CACHE STRING "Optimized debug CUDA flags" FORCE)
+    endif()
+endif()
+if (ENGINE_ENABLE_OPENMP)
+    find_package(OpenMP REQUIRED COMPONENTS CXX)
 endif()
 
 set(GGML_BUILD_EXAMPLES OFF CACHE BOOL "Do not build upstream examples" FORCE)

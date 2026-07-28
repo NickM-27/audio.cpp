@@ -102,19 +102,22 @@ jobs:
       fail-fast: false
       matrix:
         include:
+          # Only cuda13/amd64 is built at present: it is the one variant in use.
+          # Re-enable any of the others by flipping `enabled` back to true --
+          # the merge job treats a missing digest as an intentional skip.
           # ── CPU ──
           - tag: cpu
             dockerfile: .devops/cpu.Dockerfile
             platforms: linux/amd64
             arch: amd64
             runs_on: ubuntu-24.04
-            enabled: true
+            enabled: false
           - tag: cpu
             dockerfile: .devops/cpu.Dockerfile
             platforms: linux/arm64
             arch: arm64
             runs_on: ubuntu-24.04-arm
-            enabled: true
+            enabled: false
           # ── CUDA 12 ──
           - tag: cuda12
             dockerfile: .devops/cuda.Dockerfile
@@ -122,14 +125,16 @@ jobs:
             arch: amd64
             runs_on: ubuntu-24.04
             cuda_version: "12.9.2"
-            enabled: true
+            cuda_archs: "120a-real"
+            enabled: false
           - tag: cuda12
             dockerfile: .devops/cuda.Dockerfile
             platforms: linux/arm64
             arch: arm64
             runs_on: ubuntu-24.04-arm
             cuda_version: "12.9.2"
-            enabled: true
+            cuda_archs: "120a-real"
+            enabled: false
           # ── CUDA 13 ──
           - tag: cuda13
             dockerfile: .devops/cuda.Dockerfile
@@ -137,6 +142,7 @@ jobs:
             arch: amd64
             runs_on: ubuntu-24.04
             cuda_version: "13.3.0"
+            cuda_archs: "120a-real"
             enabled: true
           - tag: cuda13
             dockerfile: .devops/cuda.Dockerfile
@@ -144,7 +150,8 @@ jobs:
             arch: arm64
             runs_on: ubuntu-24.04-arm
             cuda_version: "13.3.0"
-            enabled: true
+            cuda_archs: "120a-real"
+            enabled: false
     steps:
       - name: Skip when not enabled
         if: ${{ matrix.enabled != true }}
@@ -184,6 +191,7 @@ jobs:
             IMAGE_URL=${{ github.server_url }}/${{ github.repository }}
             IMAGE_SOURCE=${{ github.server_url }}/${{ github.repository }}
             ${{ matrix.cuda_version && format('CUDA_VERSION={0}', matrix.cuda_version) || '' }}
+            ${{ matrix.cuda_archs && format('CUDA_ARCHS={0}', matrix.cuda_archs) || '' }}
           cache-from: type=registry,ref=ghcr.io/${{ needs.metadata.outputs.image_repo }}:cache-${{ matrix.arch }}-${{ matrix.tag }}
           cache-to: type=registry,ref=ghcr.io/${{ needs.metadata.outputs.image_repo }}:cache-${{ matrix.arch }}-${{ matrix.tag }},mode=max
 
